@@ -75,8 +75,8 @@ body {
 .topbar .badge {
   font-size: 10px; padding: 3px 9px;
   border-radius: 3px;
-  background: var(--bg-2); border: 1px solid var(--border-0);
-  color: var(--text-3);
+  background: var(--accent-glow); border: 1px solid var(--accent-dim);
+  color: var(--accent);
   font-family: var(--mono);
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -370,12 +370,13 @@ footer p + p { margin-top: 10px; }
 
 <header class="topbar">
   <a href="#" class="logo">Sperma<span>Core</span></a>
-  <span class="badge">ABI 1.3</span>
+  <span class="badge">ABI 1.4</span>
   <nav>
     <a href="#overview">Обзор</a>
     <a href="#core-api">Core API</a>
     <a href="#plugin-api">Plugin API</a>
-    <a href="#config">Конфиг</a>
+    <a href="#self-config">Self-Config</a>
+    <a href="#requirements">Требования</a>
     <a href="https://github.com/uglyaz0tix/spermacore" target="_blank">GitHub</a>
   </nav>
 </header>
@@ -395,9 +396,12 @@ footer p + p { margin-top: 10px; }
       <h4>Core API</h4>
       <a href="#core-api">sc_core_api_t</a>
       <a href="#core-alloc">alloc / free</a>
-      <a href="#core-log">log</a>
+      <a href="#core-log">log / log_json</a>
       <a href="#core-prompt">prompt_*</a>
       <a href="#core-config">config_get_*</a>
+      <a href="#core-config-ensure">config_ensure</a>
+      <a href="#core-plugin-check">is_plugin_loaded</a>
+      <a href="#core-now">now_ms</a>
     </div>
 
     <div class="group">
@@ -410,6 +414,32 @@ footer p + p { margin-top: 10px; }
       <a href="#plugin-get-hooks">get_hooks</a>
       <a href="#plugin-on-startup">on_startup</a>
       <a href="#plugin-sysprompt">get_system_prompt</a>
+      <a href="#plugin-health">health</a>
+      <a href="#plugin-config-reload">on_config_reload</a>
+    </div>
+
+    <div class="group">
+      <h4>Self-Configuring</h4>
+      <a href="#self-config">Как это работает</a>
+      <a href="#self-config-example">Пример</a>
+      <a href="#self-config-result">Что увидит юзер</a>
+      <a href="#self-config-rules">Правила</a>
+    </div>
+
+    <div class="group">
+      <h4>Требования</h4>
+      <a href="#requirements">min_abi_*</a>
+      <a href="#requires">requires</a>
+      <a href="#flags">Флаги</a>
+      <a href="#toposort">Топосортировка</a>
+    </div>
+
+    <div class="group">
+      <h4>Безопасность</h4>
+      <a href="#security">Обзор</a>
+      <a href="#security-validate">Валидация</a>
+      <a href="#security-limits">Лимиты</a>
+      <a href="#security-whitelist">Capability whitelist</a>
     </div>
 
     <div class="group">
@@ -442,6 +472,7 @@ footer p + p { margin-top: 10px; }
       <a href="#examples">Минимальный плагин</a>
       <a href="#example-tool">Плагин с тулом</a>
       <a href="#example-config">Чтение конфига</a>
+      <a href="#example-selfconfig">Самонастройка</a>
     </div>
 
   </aside>
@@ -449,7 +480,7 @@ footer p + p { margin-top: 10px; }
   <main class="content">
 
     <h1>SpermaCore Plugin API</h1>
-    <p class="subtitle">Справочник по C ABI для написания плагинов</p>
+    <p class="subtitle">Справочник по C ABI для написания плагинов · <strong>версия 1.4</strong></p>
 
     <section id="overview" class="reveal">
       <h2>Обзор</h2>
@@ -461,10 +492,14 @@ footer p + p { margin-top: 10px; }
         <li>Участвовать в интерактивном старте — задавать вопросы, показывать меню</li>
         <li>Реагировать на события через хуки</li>
         <li>Читать свои настройки из <code>config.toml</code></li>
-        <li>Писать в общий лог ядра</li>
+        <li><strong>Самостоятельно создавать свои секции в конфиге</strong> с дефолтами</li>
+        <li>Объявлять <strong>требования</strong> к ABI и <strong>зависимости</strong> от других плагинов</li>
+        <li>Сообщать о своём <strong>health</strong> для дашборда</li>
+        <li>Применять новый конфиг <strong>без перезапуска</strong> (hot-reload)</li>
+        <li>Писать в общий лог ядра — в том числе структурированный</li>
       </ul>
       <div class="callout info">
-        <p><strong>Философия.</strong> Ядро — гость в мире плагинов. Оно не знает, что делает плагин. Оно только спрашивает: «что ты умеешь?» и «сделай вот это». Всё остальное — дело плагина.</p>
+        <p><strong>Философия.</strong> Ядро — гость в мире плагинов. Оно не знает, что делает плагин. Оно только спрашивает: «что ты умеешь?», «чего тебе надо?» и «сделай вот это». Всё остальное — дело плагина.</p>
       </div>
     </section>
 
@@ -477,6 +512,7 @@ footer p + p { margin-top: 10px; }
         <li>Добавить имя в <code>config.toml → [plugins] load</code></li>
       </ol>
       <p>Ядро само найдёт исходник, соберёт через CMake и загрузит. Отдельная сборка не требуется.</p>
+      <p>Если плагину нужны настройки — он сам попросит ядро их создать через <code>core-&gt;config_ensure()</code> в <code>init()</code>. Юзеру не нужно знать заранее, какие ключи у плагина есть.</p>
     </section>
 
     <section id="abi-versioning" class="reveal">
@@ -494,7 +530,7 @@ footer p + p { margin-top: 10px; }
           </tr>
           <tr>
             <td><code>SC_ABI_MINOR</code></td>
-            <td><code>3</code></td>
+            <td><code>4</code></td>
             <td>При <strong>добавлении</strong> полей в конец структур (обратно совместимо)</td>
           </tr>
         </tbody>
@@ -510,11 +546,13 @@ footer p + p { margin-top: 10px; }
           <tr><td><code>1.1</code></td><td>Интерактив: <code>prompt_yes_no</code>, <code>prompt_text</code>, <code>prompt_select</code>, <code>on_startup</code></td></tr>
           <tr><td><code>1.2</code></td><td>Системные промты: <code>get_system_prompt</code></td></tr>
           <tr><td><code>1.3</code></td><td>Конфиг: <code>config_get_string / int / bool / double</code>, поле <code>enabled</code></td></tr>
+          <tr><td><code>1.4</code></td><td>Self-configuring plugins: <code>config_ensure</code>, требования (<code>min_abi_*</code>, <code>requires</code>), флаги, <code>health</code>, <code>on_config_reload</code>, <code>is_plugin_loaded</code>, <code>now_ms</code>, <code>log_json</code>, топосортировка, валидация, лимиты</td></tr>
         </tbody>
       </table>
 
       <div class="callout info">
         <p><strong>Обратная совместимость.</strong> Все новые поля добавляются <strong>только в конец</strong> структур. Старые плагины продолжают работать без пересборки. Поле <code>struct_size</code> позволяет ядру понять, какие поля есть у плагина.</p>
+        <p>Старые плагины автоматически получают дефолты новых полей: <code>min_abi = 1.0</code>, <code>flags = 0</code>, <code>requires = ""</code>, <code>health = NULL</code>, <code>on_config_reload = NULL</code>.</p>
       </div>
     </section>
 
@@ -526,6 +564,13 @@ footer p + p { margin-top: 10px; }
         <span class="kw">typedef struct</span> <span class="ty">sc_core_api</span> { ... } <span class="ty">sc_core_api_t</span>;
       </div>
 
+      <div class="callout warn">
+        <p><strong>Проверка версии.</strong> Методы, добавленные в 1.4, доступны только если <code>core-&gt;abi_minor &gt;= 4</code>. Плагин обязан проверить перед вызовом:</p>
+        <pre style="margin-top: 12px;"><code><span class="kw">if</span> (g_core-&gt;abi_minor &gt;= <span class="nm">4</span> &amp;&amp; g_core-&gt;config_ensure) {
+    g_core-&gt;<span class="fn">config_ensure</span>(...);
+}</code></pre>
+      </div>
+
       <h3 id="core-alloc">alloc / free</h3>
       <p>Выделение и освобождение памяти через аллокатор ядра.</p>
       <div class="sig">
@@ -533,13 +578,16 @@ footer p + p { margin-top: 10px; }
         <span class="ret">void</span>  (<span class="nm">SC_CALL</span> *<span class="name">free</span>)(<span class="ty">void*</span> <span class="arg">ptr</span>);
       </div>
       <div class="callout danger">
-        <p><strong>Жёсткое правило.</strong> Всё, что плагин возвращает ядру — <strong>обязано</strong> быть выделено через <code>core-&gt;alloc</code>. Ядро освободит это само через <code>core-&gt;free</code>.</p>
+        <p><strong>Жёсткое правило.</strong> Всё, что плагин возвращает ядру и помечает флагом <code>SC_PLUGIN_FLAG_OWNS_TOOL_RESULT</code> — <strong>обязано</strong> быть выделено через <code>core-&gt;alloc</code>. Ядро освободит это само через <code>core-&gt;free</code>. Без флага ядро только читает строку, не пытаясь её освободить.</p>
       </div>
 
-      <h3 id="core-log">log</h3>
-      <p>Запись в общий лог ядра. Идёт в <code>data/logs/agent.log</code> и (опционально) в stderr.</p>
+      <h3 id="core-log">log / log_json</h3>
+      <p>Запись в общий лог ядра. Идёт в <code>data/logs/agent.log</code> и (опционально) в дашборд.</p>
       <div class="sig">
         <span class="ret">void</span> (<span class="nm">SC_CALL</span> *<span class="name">log</span>)(<span class="ty">int</span> <span class="arg">level</span>, <span class="kw">const</span> <span class="ty">char</span>* <span class="arg">name</span>, <span class="kw">const</span> <span class="ty">char</span>* <span class="arg">msg</span>);
+      </div>
+      <div class="sig">
+        <span class="ret">void</span> (<span class="nm">SC_CALL</span> *<span class="name">log_json</span>)(<span class="ty">int</span> <span class="arg">level</span>, <span class="kw">const</span> <span class="ty">char</span>* <span class="arg">name</span>, <span class="kw">const</span> <span class="ty">char</span>* <span class="arg">msg_json</span>) <span class="pill new">ABI 1.4</span>;
       </div>
       <p>Уровни — зеркало логгера ядра:</p>
       <table>
@@ -554,6 +602,9 @@ footer p + p { margin-top: 10px; }
           <tr><td><code>SC_LOG_ERROR</code></td><td>4</td><td>Ошибки</td></tr>
         </tbody>
       </table>
+      <p><code>log_json</code> принимает <strong>валидный JSON-объект</strong>. Ядро парсит его и (в будущем) показывает поля в дашборде отдельными колонками. Сейчас пишет в лог как есть. Пример:</p>
+      <pre><code>g_core-&gt;<span class="fn">log_json</span>(SC_LOG_INFO, <span class="st">"myplugin"</span>,
+    <span class="st">"{\"event\":\"cache_hit\",\"key\":\"user_42\",\"latency_ms\":12}"</span>);</code></pre>
 
       <h3 id="core-prompt">prompt_yes_no / prompt_text / prompt_select</h3>
       <p>Интерактивные запросы к пользователю во время старта. Работают <strong>только</strong> из <code>init()</code> и <code>on_startup()</code>.</p>
@@ -582,12 +633,62 @@ footer p + p { margin-top: 10px; }
         <span class="ty">double</span> (<span class="nm">SC_CALL</span> *<span class="name">config_get_double</span>)(<span class="kw">const</span> <span class="ty">char</span>* <span class="arg">key</span>, <span class="ty">double</span> <span class="arg">default_value</span>);
       </div>
       <p>Если ключ не найден в секции — возвращается <code>default_value</code>. Если секции нет вообще — работает так же, все ключи берутся из дефолтов.</p>
-      <div class="callout info">
-        <p><strong>Пример.</strong> Если в <code>config.toml</code> есть <code>[plugins.telegram] typing_speed_min = 250</code>, то внутри <code>init()</code> вызов <code>g_core-&gt;config_get_int("typing_speed_min", 200)</code> вернёт <code>250</code>.</p>
+      <div class="callout warn">
+        <p><strong>Вне init — возвращает NULL/дефолт.</strong> Если плагин вызовет <code>config_get_*</code> из <code>call_tool</code>, ядро вернёт дефолт и запишет WARN в лог. Значения нужно кэшировать у себя в <code>init()</code>.</p>
       </div>
       <div class="callout warn">
         <p><strong>Внимание на строки.</strong> <code>config_get_string</code> возвращает указатель, живущий до конца <code>init</code>. Если нужно сохранить значение дольше — <strong>скопируйте</strong> его в свой буфер через <code>strncpy</code> или ручной цикл.</p>
       </div>
+
+      <h3 id="core-config-ensure">config_ensure <span class="pill new">ABI 1.4</span></h3>
+      <p>Попросить ядро создать или дополнить секцию <code>[plugins.&lt;name&gt;]</code> в <code>config.toml</code>. Это то, что делает плагины <strong>самонастраивающимися</strong>: при первом запуске они сами добавляют свои дефолты в конфиг, а юзер потом видит готовую секцию и может её править.</p>
+      <div class="sig">
+        <span class="ty">int</span> (<span class="nm">SC_CALL</span> *<span class="name">config_ensure</span>)(<span class="kw">const</span> <span class="ty">char</span>* <span class="arg">name</span>, <span class="kw">const</span> <span class="ty">char</span>* <span class="arg">defaults_json</span>);
+      </div>
+      <table>
+        <thead>
+          <tr><th>Параметр</th><th>Что значит</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>name</code></td><td>Имя плагина. Должно совпадать с именем в <code>plugin_info.name</code> и с секцией <code>[plugins.&lt;name&gt;]</code></td></tr>
+          <tr><td><code>defaults_json</code></td><td>JSON-объект с дефолтными значениями: <code>{"model":"qwen3","timeout":30,"debug":false}</code></td></tr>
+        </tbody>
+      </table>
+      <p>Возврат:</p>
+      <table>
+        <thead>
+          <tr><th>Константа</th><th>Значение</th><th>Что случилось</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>SC_CONFIG_EXISTS</code></td><td>0</td><td>Секция уже была, ничего не меняли</td></tr>
+          <tr><td><code>SC_CONFIG_CREATED</code></td><td>1</td><td>Секции не было — создали с дефолтами</td></tr>
+          <tr><td><code>SC_CONFIG_APPENDED</code></td><td>2</td><td>Секция была, но добавили недостающие ключи</td></tr>
+          <tr><td><code>SC_CONFIG_ERR</code></td><td>-1</td><td>Ошибка чтения/записи</td></tr>
+        </tbody>
+      </table>
+      <div class="callout success">
+        <p><strong>Существующие ключи не перезаписываются.</strong> Если юзер поменял <code>model = "llama3"</code> — при следующем запуске плагина ядро увидит ключ, не тронет его. Комментарии в <code>config.toml</code> тоже сохраняются (append-only).</p>
+      </div>
+      <p>Работает <strong>только во время <code>init()</code></strong>. Вне <code>init</code> — возвращает <code>SC_CONFIG_ERR</code> и пишет WARN.</p>
+
+      <h3 id="core-plugin-check">is_plugin_loaded <span class="pill new">ABI 1.4</span></h3>
+      <p>Загружен ли указанный плагин. Полезно, если плагин может работать «частично» без зависимости.</p>
+      <div class="sig">
+        <span class="ty">int</span> (<span class="nm">SC_CALL</span> *<span class="name">is_plugin_loaded</span>)(<span class="kw">const</span> <span class="ty">char</span>* <span class="arg">name</span>);
+      </div>
+      <p>Возвращает <code>1</code> — загружен, <code>0</code> — нет. Например:</p>
+      <pre><code><span class="kw">if</span> (g_core-&gt;<span class="fn">is_plugin_loaded</span>(<span class="st">"telegram"</span>)) {
+    <span class="cm">// умеем отправлять сообщения</span>
+} <span class="kw">else</span> {
+    <span class="cm">// работаем в ограниченном режиме</span>
+}</code></pre>
+
+      <h3 id="core-now">now_ms <span class="pill new">ABI 1.4</span></h3>
+      <p>Монотонное время в миллисекундах от старта процесса. Для таймеров и измерения интервалов внутри плагина.</p>
+      <div class="sig">
+        <span class="ty">uint64_t</span> (<span class="nm">SC_CALL</span> *<span class="name">now_ms</span>)(<span class="ty">void</span>);
+      </div>
+      <p>Не путать с <code>time(NULL)</code>: <code>now_ms</code> не зависит от системных часов и не скачет при переводе времени.</p>
     </section>
 
     <section id="plugin-api" class="reveal">
@@ -603,14 +704,20 @@ footer p + p { margin-top: 10px; }
       <div class="sig">
         <span class="kw">const</span> <span class="ty">sc_plugin_info_t</span>* (<span class="nm">SC_CALL</span> *<span class="name">get_info</span>)(<span class="ty">void</span>);
       </div>
+      <div class="callout danger">
+        <p><strong>Валидация ядром.</strong> Ядро проверяет: <code>name</code> не NULL, ≤ 64 символов, <code>version</code> ≤ 32 символов, <code>struct_size</code> не превышает размер структуры ядра. Если проверка не прошла — плагин отвергается с понятным логом.</p>
+      </div>
 
       <h3 id="plugin-init">init / deinit <span class="pill ok">init обязателен</span></h3>
-      <p>Вызывается один раз при загрузке и выгрузке плагина. <strong>Внутри <code>init</code> доступны <code>config_get_*</code> и <code>prompt_*</code>.</strong></p>
+      <p>Вызывается один раз при загрузке и выгрузке плагина. <strong>Внутри <code>init</code> доступны <code>config_get_*</code>, <code>config_ensure</code> и <code>prompt_*</code>.</strong></p>
       <div class="sig">
         <span class="ty">sc_status_t</span> (<span class="nm">SC_CALL</span> *<span class="name">init</span>)(<span class="kw">const</span> <span class="ty">sc_core_api_t</span>* <span class="arg">core</span>, <span class="kw">const</span> <span class="ty">char</span>* <span class="arg">config_json</span>);<br>
         <span class="ty">sc_status_t</span> (<span class="nm">SC_CALL</span> *<span class="name">deinit</span>)(<span class="ty">void</span>);
       </div>
       <p><code>config_json</code> — содержимое секции <code>[plugins.&lt;name&gt;]</code> в виде JSON. Обычно не нужен — используйте <code>config_get_*</code>.</p>
+      <div class="callout info">
+        <p><strong>Гарантия deinit.</strong> Даже если <code>init</code> вернул ошибку, ядро вызовет <code>deinit</code> перед выгрузкой библиотеки — чтобы плагин мог освободить частично созданные ресурсы.</p>
+      </div>
 
       <h3 id="plugin-get-tools">get_tools <span class="pill warn">опционально</span></h3>
       <p>Возвращает JSON-массив описаний тулов в формате OpenAI function calling.</p>
@@ -623,6 +730,12 @@ footer p + p { margin-top: 10px; }
       <div class="sig">
         <span class="ty">sc_status_t</span> (<span class="nm">SC_CALL</span> *<span class="name">call_tool</span>)(<span class="kw">const</span> <span class="ty">char</span>* <span class="arg">tool_name</span>, <span class="kw">const</span> <span class="ty">char</span>* <span class="arg">args_json</span>, <span class="ty">char</span>** <span class="arg">out_json</span>);
       </div>
+      <div class="callout warn">
+        <p><strong>Таймаут.</strong> Ядро ждёт ответ не более 30 секунд. Если плагин не успел — вызов отменяется, в лог идёт <code>SC_ERR_TIMEOUT</code>, воркер продолжает работу. Не делайте долгих синхронных операций внутри <code>call_tool</code>.</p>
+      </div>
+      <div class="callout warn">
+        <p><strong>Лимит размера.</strong> Результат обрезается до 1 МБ. Всё, что длиннее — теряется, в лог идёт WARN. Если нужно больше — сохраняйте в файл и возвращайте путь.</p>
+      </div>
 
       <h3 id="plugin-get-hooks">get_hooks <span class="pill warn">опционально</span></h3>
       <p>Возвращает массив зарегистрированных хуков.</p>
@@ -631,7 +744,7 @@ footer p + p { margin-top: 10px; }
       </div>
 
       <h3 id="plugin-on-startup">on_startup <span class="pill new">ABI 1.1</span></h3>
-      <p>Вызывается один раз после загрузки <strong>всех</strong> плагинов. Здесь плагин может задать вопросы через <code>core-&gt;prompt_*</code>.</p>
+      <p>Вызывается один раз после загрузки <strong>всех</strong> плагинов. Здесь плагин может задать вопросы через <code>core-&gt;prompt_*</code>, проверить наличие зависимостей через <code>is_plugin_loaded</code>.</p>
       <div class="sig">
         <span class="ty">sc_status_t</span> (<span class="nm">SC_CALL</span> *<span class="name">on_startup</span>)(<span class="ty">void</span>);
       </div>
@@ -640,6 +753,220 @@ footer p + p { margin-top: 10px; }
       <p>Возвращает текст, который ядро добавляет к системному промту LLM.</p>
       <div class="sig">
         <span class="ty">sc_status_t</span> (<span class="nm">SC_CALL</span> *<span class="name">get_system_prompt</span>)(<span class="ty">char</span>** <span class="arg">out_text</span>);
+      </div>
+
+      <h3 id="plugin-health">health <span class="pill new">ABI 1.4</span></h3>
+      <p>Возвращает текущее состояние плагина для дашборда. Опционально — если NULL, дашборд показывает просто «загружен».</p>
+      <div class="sig">
+        <span class="ty">sc_status_t</span> (<span class="nm">SC_CALL</span> *<span class="name">health</span>)(<span class="ty">char</span>** <span class="arg">out_json</span>);
+      </div>
+      <p>Ожидаемый JSON:</p>
+      <pre><code>{
+  <span class="st">"ok"</span>: <span class="kw">true</span>,
+  <span class="st">"msg"</span>: <span class="st">"connected, 42 peers cached"</span>,
+  <span class="st">"extra"</span>: { <span class="st">"queue"</span>: <span class="nm">3</span>, <span class="st">"latency_ms"</span>: <span class="nm">120</span> }
+}</code></pre>
+      <p>Поле <code>ok: false</code> подсветит плагин красным в дашборде. Например, если соединение с внешним сервисом потеряно.</p>
+
+      <h3 id="plugin-config-reload">on_config_reload <span class="pill new">ABI 1.4</span></h3>
+      <p>Ядро перечитало <code>config.toml</code> (например, по команде или SIGUSR1). Плагин может применить новые настройки <strong>без перезапуска</strong>.</p>
+      <div class="sig">
+        <span class="ty">sc_status_t</span> (<span class="nm">SC_CALL</span> *<span class="name">on_config_reload</span>)(<span class="kw">const</span> <span class="ty">char</span>* <span class="arg">cfg_json</span>);
+      </div>
+      <p><code>cfg_json</code> — свежая секция <code>[plugins.&lt;name&gt;]</code> в JSON. Если NULL — плагин перезапускается целиком (пока не реализовано, будет в следующих версиях).</p>
+      <div class="callout info">
+        <p><strong>Внутри reload работают <code>config_get_*</code>.</strong> Плагин может перечитать настройки теми же функциями, что и в <code>init</code>. Указатели живут до конца вызова <code>on_config_reload</code>.</p>
+      </div>
+    </section>
+
+    <section id="self-config" class="reveal">
+      <h2>Self-Configuring Plugins</h2>
+      <p>Это главная фишка ABI 1.4. Плагин при первом запуске сам просит ядро создать свою секцию в <code>config.toml</code> с дефолтами. Юзер потом видит готовый конфиг и может его править, но плагин уже не сломается от отсутствия ключей.</p>
+
+      <h3>Как это работает</h3>
+      <ol>
+        <li>В <code>init()</code> плагин вызывает <code>core-&gt;config_ensure("myname", "{...}")</code>.</li>
+        <li>Ядро проверяет <code>config.toml</code>:
+          <ul>
+            <li>секции нет — создаёт с дефолтами;</li>
+            <li>секция есть, но чего-то не хватает — добавляет недостающие ключи;</li>
+            <li>всё есть — ничего не делает.</li>
+          </ul>
+        </li>
+        <li>Плагин читает <code>config_get_*</code> — получает то, что в конфиге (или дефолты, если юзер удалил ключ).</li>
+      </ol>
+
+      <h3 id="self-config-example">Пример</h3>
+      <pre><code><span class="kw">static</span> <span class="ty">sc_status_t</span> <span class="fn">init</span>(<span class="kw">const</span> <span class="ty">sc_core_api_t</span>* api, <span class="kw">const</span> <span class="ty">char</span>* cfg_json) {
+    g_core = api;
+
+    <span class="cm">// Просим ядро создать секцию, если её нет</span>
+    <span class="kw">if</span> (api-&gt;abi_minor &gt;= <span class="nm">4</span> &amp;&amp; api-&gt;<span class="fn">config_ensure</span>) {
+        <span class="ty">int</span> rc = api-&gt;<span class="fn">config_ensure</span>(<span class="st">"myname"</span>,
+            <span class="st">"{\"model\":\"qwen3:4b\",\"timeout\":30,\"debug\":false}"</span>);
+        <span class="kw">if</span> (rc == SC_CONFIG_CREATED) {
+            api-&gt;<span class="fn">log</span>(SC_LOG_INFO, <span class="st">"myname"</span>,
+                <span class="st">"created config section with defaults"</span>);
+        }
+    }
+
+    <span class="cm">// Теперь читаем — если юзер удалил ключ, получим дефолт</span>
+    <span class="kw">const char</span>* model = api-&gt;<span class="fn">config_get_string</span>(<span class="st">"model"</span>, <span class="st">"qwen3:4b"</span>);
+    <span class="ty">int</span> timeout = api-&gt;<span class="fn">config_get_int</span>(<span class="st">"timeout"</span>, <span class="nm">30</span>);
+    <span class="ty">int</span> debug = api-&gt;<span class="fn">config_get_bool</span>(<span class="st">"debug"</span>, <span class="nm">0</span>);
+
+    <span class="cm">// ВАЖНО: скопировать строку, если нужно дольше init()</span>
+    <span class="fn">snprintf</span>(g_model, <span class="kw">sizeof</span>(g_model), <span class="st">"%s"</span>, model);
+    g_timeout = timeout;
+    g_debug = debug;
+
+    <span class="kw">return</span> SC_OK;
+}</code></pre>
+
+      <h3 id="self-config-result">Что увидит юзер</h3>
+      <p>После первого запуска в <code>config.toml</code> появится:</p>
+      <pre><code><span class="cm"># ==== auto-added by plugin: myname ====</span>
+[<span class="nm">plugins.myname</span>]
+<span class="fn">model</span> = <span class="st">"qwen3:4b"</span>
+<span class="fn">timeout</span> = <span class="nm">30</span>
+<span class="fn">debug</span> = <span class="kw">false</span>
+</code></pre>
+
+      <h3 id="self-config-rules">Правила</h3>
+      <table>
+        <thead>
+          <tr><th>Правило</th><th>Что значит</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Существующие ключи не перезаписываются</td><td>Если юзер поменял <code>model</code> — значение остаётся</td></tr>
+          <tr><td>Недостающие ключи добавляются</td><td>Если в секции не было <code>timeout</code> — добавится</td></tr>
+          <tr><td>Комментарии сохраняются</td><td>Ядро пишет append-only, не перегенерирует файл целиком</td></tr>
+          <tr><td>Только в init</td><td>Вне <code>init</code> возвращает <code>SC_CONFIG_ERR</code></td></tr>
+          <tr><td>Имя = секция</td><td><code>config_ensure("myname", ...)</code> создаёт <code>[plugins.myname]</code></td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout success">
+        <p><strong>Зачем это.</strong> Раньше юзер должен был вручную открыть документацию, узнать, какие ключи поддерживает плагин, вписать их в конфиг. Теперь достаточно запустить ядро — и все секции появятся сами, с разумными дефолтами. Юзер только правит то, что хочет поменять.</p>
+      </div>
+    </section>
+
+    <section id="requirements" class="reveal">
+      <h2>Требования</h2>
+      <p>ABI 1.4 добавил в <code>sc_plugin_info_t</code> поля, которые позволяют плагину объявить свои требования к ядру и к другим плагинам. Ядро проверяет их <strong>до загрузки</strong> — до вызова <code>init</code>, чтобы не тратить ресурсы впустую.</p>
+
+      <h3 id="requires">Поле requires</h3>
+      <p>CSV имён плагинов-зависимостей. Если хотя бы одна не загружена — плагин пропускается с понятным логом.</p>
+      <div class="sig">
+        <span class="kw">const</span> <span class="ty">char</span>* <span class="name">requires</span>;  <span class="cm">// "telegram,embedsc"</span>
+      </div>
+      <p>Пример:</p>
+      <pre><code><span class="kw">static const</span> <span class="ty">sc_plugin_info_t</span> info = {
+    .name = <span class="st">"myreact"</span>,
+    .version = <span class="st">"1.0.0"</span>,
+    .description = <span class="st">"Reactions wrapper"</span>,
+    .capabilities = NULL,
+    .min_abi_major = <span class="nm">1</span>,
+    .min_abi_minor = <span class="nm">4</span>,
+    .flags = <span class="nm">SC_PLUGIN_FLAG_THREAD_SAFE</span>,
+    .requires = <span class="st">"telegram"</span>,   <span class="cm">// не загрузится без telegram</span>
+};</code></pre>
+
+      <h3 id="toposort">Топосортировка</h3>
+      <p>Раньше порядок загрузки плагинов определялся порядком в <code>[plugins].load</code> — если <code>react</code> стоял до <code>telegram</code>, он не находил транспорт. Теперь ядро само сортирует по зависимостям.</p>
+      <p>Пример: <code>load = ["react", "usersc", "telegram"]</code>, и <code>react.requires = "telegram"</code>. Ядро:</p>
+      <ol>
+        <li>Загрузит <code>usersc</code> и <code>telegram</code> (у них нет зависимостей).</li>
+        <li>Потом <code>react</code>, потому что его зависимость уже загружена.</li>
+      </ol>
+      <div class="callout warn">
+        <p><strong>Циклические зависимости.</strong> Если A требует B, а B требует A — ядро логирует ошибку и грузит оба в порядке объявления. Плагины должны сами пережить, что зависимость ещё не готова.</p>
+      </div>
+
+      <h3 id="flags">Флаги</h3>
+      <p>Битовые флаги поведения. Складываются через <code>|</code>.</p>
+      <table>
+        <thead>
+          <tr><th>Флаг</th><th>Значение</th><th>Что значит</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>SC_PLUGIN_FLAG_THREAD_SAFE</code></td>
+            <td><code>1 &lt;&lt; 0</code></td>
+            <td><code>call_tool</code> можно звать параллельно. Без флага ядро сериализует вызовы через мьютекс</td>
+          </tr>
+          <tr>
+            <td><code>SC_PLUGIN_FLAG_OWNS_TOOL_RESULT</code></td>
+            <td><code>1 &lt;&lt; 1</code></td>
+            <td>Плагин возвращает malloc-строку, ядро освободит её через <code>core-&gt;free</code></td>
+          </tr>
+          <tr>
+            <td><code>SC_PLUGIN_FLAG_NO_HOT_RELOAD</code></td>
+            <td><code>1 &lt;&lt; 2</code></td>
+            <td>Плагин не поддерживает hot-reload конфига</td>
+          </tr>
+          <tr>
+            <td><code>SC_PLUGIN_FLAG_REQUIRES_NETWORK</code></td>
+            <td><code>1 &lt;&lt; 3</code></td>
+            <td>Hint для capability-based security (пока не enforced)</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="callout danger">
+        <p><strong>Осторожно с THREAD_SAFE.</strong> Флаг <strong>отключает</strong> мьютекс ядра. Если внутри <code>call_tool</code> плагин использует глобальные переменные без своей синхронизации — будут гонки. Либо используйте <code>_Thread_local</code>, либо свои мьютексы, либо не ставьте флаг.</p>
+      </div>
+      <div class="callout info">
+        <p><strong>OWNS_TOOL_RESULT и обратная совместимость.</strong> Плагины ABI ≤ 1.3 возвращают указатели на статические буферы — их нельзя освобождать. Ядро проверяет флаг: если он не выставлен, строка только читается через <code>C.GoString</code> и не free.</p>
+      </div>
+    </section>
+
+    <section id="security" class="reveal">
+      <h2>Безопасность</h2>
+      <p>ABI 1.4 добавил несколько защит от кривых плагинов. Ядро больше не падает от одного бага — плохой плагин отвергается или ограничивается.</p>
+
+      <h3 id="security-validate">Валидация при загрузке</h3>
+      <table>
+        <thead>
+          <tr><th>Что проверяется</th><th>Что происходит при провале</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>struct_size &lt;= sizeof(plugin_api_t)</code></td><td>Плагин отвергается (структура больше, чем ожидает ядро — несовместимо)</td></tr>
+          <tr><td><code>info.name != NULL</code> и ≤ 64 символов</td><td>Отвергается с логом</td></tr>
+          <tr><td><code>info.version</code> ≤ 32 символов</td><td>Отвергается</td></tr>
+          <tr><td><code>init != NULL</code> после init</td><td>Отвергается</td></tr>
+          <tr><td><code>call_tool != NULL</code> если <code>get_tools</code> возвращает непустой массив</td><td>Отвергается</td></tr>
+          <tr><td><code>min_abi_minor &lt;= core-&gt;abi_minor</code></td><td>Пропускается (не отвергается)</td></tr>
+          <tr><td><code>requires</code> все загружены</td><td>Пропускается с логом</td></tr>
+        </tbody>
+      </table>
+
+      <h3 id="security-limits">Лимиты</h3>
+      <table>
+        <thead>
+          <tr><th>Что</th><th>Лимит</th><th>Поведение при превышении</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Ответ <code>call_tool</code></td><td>1 МБ</td><td>Обрезается, WARN в лог</td></tr>
+          <tr><td>Ответ <code>get_tools</code></td><td>256 КБ</td><td>Отвергается, плагин считается без тулов</td></tr>
+          <tr><td>Ответ <code>get_system_prompt</code></td><td>64 КБ</td><td>Обрезается, WARN в лог</td></tr>
+          <tr><td>Время <code>call_tool</code></td><td>30 сек</td><td><code>SC_ERR_TIMEOUT</code>, воркер продолжает работу</td></tr>
+          <tr><td>Время <code>init</code></td><td>60 сек</td><td>Плагин отвергается</td></tr>
+        </tbody>
+      </table>
+
+      <h3 id="security-whitelist">Capability whitelist</h3>
+      <p>В конфиге плагина можно ограничить, какие syscall-методы ему разрешены. Если поля нет — все разрешены (для обратной совместимости).</p>
+      <pre><code>[<span class="nm">plugins.embedsc</span>]
+<span class="fn">enabled</span> = <span class="kw">true</span>
+<span class="fn">model</span> = <span class="st">"qwen3-embedding:latest"</span>
+<span class="fn">allow_syscalls</span> = [<span class="st">"embedsc.*"</span>, <span class="st">"tg.get_user"</span>]
+
+[<span class="nm">plugins.telegram</span>]
+<span class="fn">enabled</span> = <span class="kw">true</span>
+<span class="fn">allow_syscalls</span> = [<span class="st">"tg.*"</span>]</code></pre>
+      <p>Плагин-калькулятор не сможет случайно дёрнуть <code>tg.send_message</code> в чат твоей мамы. Если попытается — получит <code>SC_ERR_FORBIDDEN</code>, в лог пойдёт WARN с именем плагина и методом.</p>
+      <div class="callout info">
+        <p><strong>Маски.</strong> <code>tg.*</code> матчит все методы с префиксом <code>tg.</code>. <code>*</code> матчит всё. Точное имя матчит только себя.</p>
       </div>
     </section>
 
@@ -654,7 +981,7 @@ footer p + p { margin-top: 10px; }
       </div>
 
       <h3 id="config-example">Пример</h3>
-      <pre><code><span class="cm"># Список плагинов для загрузки (порядок = порядок загрузки)</span>
+      <pre><code><span class="cm"># Список плагинов для загрузки (порядок не критичен — ядро топосортирует)</span>
 [<span class="nm">plugins</span>]
 <span class="fn">load</span> = [<span class="st">"sysprompt"</span>, <span class="st">"remembrance"</span>, <span class="st">"telegram"</span>, <span class="st">"time"</span>]
 
@@ -664,8 +991,9 @@ footer p + p { margin-top: 10px; }
 <span class="fn">session_name</span> = <span class="st">"agent"</span>
 <span class="fn">typing_speed_min</span> = <span class="nm">200</span>
 <span class="fn">typing_speed_max</span> = <span class="nm">400</span>
+<span class="fn">allow_syscalls</span> = [<span class="st">"tg.*"</span>]
 
-<span class="cm"># --- Модуль time (не поддерживает настройки, но секция есть) ---</span>
+<span class="cm"># --- Модуль time ---</span>
 [<span class="nm">plugins.time</span>]
 <span class="fn">enabled</span> = <span class="kw">true</span>
 </code></pre>
@@ -682,16 +1010,21 @@ footer p + p { margin-top: 10px; }
       <h2>Структуры</h2>
 
       <h3>sc_plugin_info_t</h3>
-      <p>Метаданные плагина.</p>
+      <p>Метаданные плагина. Поля 1.4 — в конце.</p>
       <table>
         <thead>
-          <tr><th>Поле</th><th>Тип</th><th>Описание</th></tr>
+          <tr><th>Поле</th><th>Тип</th><th>Версия</th><th>Описание</th></tr>
         </thead>
         <tbody>
-          <tr><td><code>name</code></td><td><code>const char*</code></td><td>Уникальный идентификатор (<code>"time"</code>)</td></tr>
-          <tr><td><code>version</code></td><td><code>const char*</code></td><td>Semver (<code>"1.0.0"</code>)</td></tr>
-          <tr><td><code>description</code></td><td><code>const char*</code></td><td>Короткое описание</td></tr>
-          <tr><td><code>capabilities</code></td><td><code>const char*</code></td><td>CSV вида <code>"vision:100,tts:50"</code> или <code>NULL</code></td></tr>
+          <tr><td><code>name</code></td><td><code>const char*</code></td><td>1.0</td><td>Уникальный идентификатор</td></tr>
+          <tr><td><code>version</code></td><td><code>const char*</code></td><td>1.0</td><td>Semver</td></tr>
+          <tr><td><code>description</code></td><td><code>const char*</code></td><td>1.0</td><td>Короткое описание</td></tr>
+          <tr><td><code>capabilities</code></td><td><code>const char*</code></td><td>1.0</td><td>CSV или NULL</td></tr>
+          <tr><td><code>min_abi_major</code></td><td><code>uint32_t</code></td><td>1.4</td><td>Минимальная мажорная ABI ядра</td></tr>
+          <tr><td><code>min_abi_minor</code></td><td><code>uint32_t</code></td><td>1.4</td><td>Минимальная минорная ABI ядра</td></tr>
+          <tr><td><code>flags</code></td><td><code>uint32_t</code></td><td>1.4</td><td>См. <code>SC_PLUGIN_FLAG_*</code></td></tr>
+          <tr><td><code>_reserved</code></td><td><code>uint32_t</code></td><td>1.4</td><td>Выравнивание</td></tr>
+          <tr><td><code>requires</code></td><td><code>const char*</code></td><td>1.4</td><td>CSV имён плагинов-зависимостей</td></tr>
         </tbody>
       </table>
 
@@ -713,17 +1046,19 @@ footer p + p { margin-top: 10px; }
       <p>Коды возврата. Отрицательные — ошибки.</p>
       <table>
         <thead>
-          <tr><th>Константа</th><th>Значение</th></tr>
+          <tr><th>Константа</th><th>Значение</th><th>Версия</th></tr>
         </thead>
         <tbody>
-          <tr><td><code>SC_OK</code></td><td>0</td></tr>
-          <tr><td><code>SC_ERR_GENERIC</code></td><td>-1</td></tr>
-          <tr><td><code>SC_ERR_INVALID_ARG</code></td><td>-2</td></tr>
-          <tr><td><code>SC_ERR_NOT_FOUND</code></td><td>-3</td></tr>
-          <tr><td><code>SC_ERR_DISABLED</code></td><td>-4</td></tr>
-          <tr><td><code>SC_ERR_INTERNAL</code></td><td>-5</td></tr>
-          <tr><td><code>SC_ERR_NO_MEMORY</code></td><td>-6</td></tr>
-          <tr><td><code>SC_ERR_NOT_IMPLEMENTED</code></td><td>-7</td></tr>
+          <tr><td><code>SC_OK</code></td><td>0</td><td>1.0</td></tr>
+          <tr><td><code>SC_ERR_GENERIC</code></td><td>-1</td><td>1.0</td></tr>
+          <tr><td><code>SC_ERR_INVALID_ARG</code></td><td>-2</td><td>1.0</td></tr>
+          <tr><td><code>SC_ERR_NOT_FOUND</code></td><td>-3</td><td>1.0</td></tr>
+          <tr><td><code>SC_ERR_DISABLED</code></td><td>-4</td><td>1.0</td></tr>
+          <tr><td><code>SC_ERR_INTERNAL</code></td><td>-5</td><td>1.0</td></tr>
+          <tr><td><code>SC_ERR_NO_MEMORY</code></td><td>-6</td><td>1.0</td></tr>
+          <tr><td><code>SC_ERR_NOT_IMPLEMENTED</code></td><td>-7</td><td>1.0</td></tr>
+          <tr><td><code>SC_ERR_TIMEOUT</code></td><td>-8</td><td>1.4</td></tr>
+          <tr><td><code>SC_ERR_FORBIDDEN</code></td><td>-9</td><td>1.4</td></tr>
         </tbody>
       </table>
     </section>
@@ -755,7 +1090,10 @@ footer p + p { margin-top: 10px; }
       <h3>Формат описания</h3>
       <p>JSON-массив в формате OpenAI function calling. Каждый тул — объект с полями <code>name</code>, <code>description</code>, <code>parameters</code>.</p>
       <h3 id="tools-call">Обработка вызова</h3>
-      <p>Когда модель решает вызвать тул, ядро находит плагин-владелец по имени и вызывает его <code>call_tool()</code>.</p>
+      <p>Когда модель решает вызвать тул, ядро находит плагин-владелец по имени и вызывает его <code>call_tool()</code>. Если два плагина заявили одно имя — побеждает первый по порядку загрузки.</p>
+      <div class="callout warn">
+        <p><strong>Таймаут 30 секунд.</strong> Если <code>call_tool</code> не успел — вызов отменяется, модель получает <code>{"error":"timeout"}</code> в качестве результата. Не делайте долгих синхронных HTTP-запросов внутри <code>call_tool</code> без своего таймаута.</p>
+      </div>
     </section>
 
     <section id="examples" class="reveal">
@@ -763,6 +1101,68 @@ footer p + p { margin-top: 10px; }
 
       <h3 id="example-tool">Плагин с тулом</h3>
       <p>Минимальный плагин, который предоставляет один тул.</p>
+      <pre><code><span class="kw">#include</span> <span class="st">"plugin_api.h"</span>
+<span class="kw">#include</span> <span class="st">&lt;string.h&gt;</span>
+
+<span class="kw">static const</span> <span class="ty">sc_core_api_t</span>* g_core = NULL;
+
+<span class="kw">static const</span> <span class="ty">sc_plugin_info_t</span>* <span class="fn">get_info</span>(<span class="ty">void</span>) {
+    <span class="kw">static const</span> <span class="ty">sc_plugin_info_t</span> info = {
+        .name = <span class="st">"hello"</span>,
+        .version = <span class="st">"1.0.0"</span>,
+        .description = <span class="st">"Example plugin"</span>,
+        .capabilities = NULL,
+        .min_abi_major = <span class="nm">1</span>,
+        .min_abi_minor = <span class="nm">4</span>,
+        .flags = <span class="nm">SC_PLUGIN_FLAG_THREAD_SAFE</span>,
+        .requires = <span class="st">""</span>,
+    };
+    <span class="kw">return</span> &amp;info;
+}
+
+<span class="kw">static</span> <span class="ty">sc_status_t</span> <span class="fn">get_tools</span>(<span class="ty">char</span>** out) {
+    <span class="kw">if</span> (!out) <span class="kw">return</span> SC_ERR_INVALID_ARG;
+    <span class="kw">static const char</span>* tools =
+        <span class="st">"[{\"name\":\"hello\","</span>
+        <span class="st">"\"description\":\"Say hello\","</span>
+        <span class="st">"\"parameters\":{\"type\":\"object\",\"properties\":{},"</span>
+        <span class="st">"\"required\":[]}}]"</span>;
+    *out = (<span class="ty">char</span>*)tools;
+    <span class="kw">return</span> SC_OK;
+}
+
+<span class="kw">static</span> <span class="ty">sc_status_t</span> <span class="fn">call_tool</span>(<span class="kw">const</span> <span class="ty">char</span>* name,
+                            <span class="kw">const</span> <span class="ty">char</span>* args,
+                            <span class="ty">char</span>** out) {
+    <span class="kw">if</span> (!name || !out) <span class="kw">return</span> SC_ERR_INVALID_ARG;
+    *out = NULL;
+    <span class="kw">if</span> (<span class="fn">strcmp</span>(name, <span class="st">"hello"</span>) != <span class="nm">0</span>) <span class="kw">return</span> SC_ERR_NOT_FOUND;
+
+    <span class="kw">static char</span> buf[<span class="nm">64</span>];
+    <span class="fn">snprintf</span>(buf, <span class="kw">sizeof</span>(buf), <span class="st">"{\"status\":\"ok\"}"</span>);
+    *out = buf;
+    <span class="kw">return</span> SC_OK;
+}
+
+<span class="kw">static</span> <span class="ty">sc_status_t</span> <span class="fn">init</span>(<span class="kw">const</span> <span class="ty">sc_core_api_t</span>* api, <span class="kw">const</span> <span class="ty">char</span>* cfg) {
+    (<span class="ty">void</span>)cfg;
+    g_core = api;
+    <span class="kw">if</span> (api-&gt;log) {
+        api-&gt;<span class="fn">log</span>(SC_LOG_INFO, <span class="st">"hello"</span>, <span class="st">"initialized"</span>);
+    }
+    <span class="kw">return</span> SC_OK;
+}
+
+<span class="kw">static</span> <span class="ty">sc_plugin_api_t</span> g_api = {
+    SC_ABI_MAJOR, SC_ABI_MINOR, <span class="kw">sizeof</span>(<span class="ty">sc_plugin_api_t</span>),
+    get_info, init, NULL, NULL, get_tools, call_tool,
+    NULL, NULL,   <span class="cm">// on_startup, get_system_prompt</span>
+    NULL, NULL,   <span class="cm">// health, on_config_reload (ABI 1.4)</span>
+};
+
+SC_EXPORT <span class="kw">const</span> <span class="ty">sc_plugin_api_t</span>* SC_CALL <span class="fn">plugin_get_api</span>(<span class="ty">void</span>) {
+    <span class="kw">return</span> &amp;g_api;
+}</code></pre>
 
       <h3 id="example-config">Чтение конфига</h3>
       <p>Как читать свою секцию <code>[plugins.&lt;name&gt;]</code>.</p>
@@ -779,8 +1179,54 @@ footer p + p { margin-top: 10px; }
     <span class="fn">snprintf</span>(g_name, <span class="kw">sizeof</span>(g_name), <span class="st">"%s"</span>, name);
 
     <span class="kw">return</span> SC_OK;
-}
-</code></pre>
+}</code></pre>
+
+      <h3 id="example-selfconfig">Самонастройка</h3>
+      <p>Полный пример плагина, который сам создаёт секцию в конфиге.</p>
+      <pre><code><span class="kw">static</span> <span class="ty">sc_status_t</span> <span class="fn">init</span>(<span class="kw">const</span> <span class="ty">sc_core_api_t</span>* api, <span class="kw">const</span> <span class="ty">char</span>* cfg_json) {
+    g_core = api;
+    (<span class="ty">void</span>)cfg_json;
+
+    <span class="cm">// 1. Просим ядро создать секцию с дефолтами (только ABI 1.4+)</span>
+    <span class="kw">if</span> (api-&gt;abi_minor &gt;= <span class="nm">4</span> &amp;&amp; api-&gt;config_ensure) {
+        <span class="ty">int</span> rc = api-&gt;<span class="fn">config_ensure</span>(<span class="st">"myplugin"</span>,
+            <span class="st">"{\"model\":\"qwen3:4b\",\"timeout\":30,\"debug\":false}"</span>);
+        <span class="kw">switch</span> (rc) {
+            <span class="kw">case</span> SC_CONFIG_CREATED:
+                api-&gt;<span class="fn">log</span>(SC_LOG_INFO, <span class="st">"myplugin"</span>,
+                    <span class="st">"created config section"</span>);
+                <span class="kw">break</span>;
+            <span class="kw">case</span> SC_CONFIG_APPENDED:
+                api-&gt;<span class="fn">log</span>(SC_LOG_INFO, <span class="st">"myplugin"</span>,
+                    <span class="st">"added missing config keys"</span>);
+                <span class="kw">break</span>;
+            <span class="kw">case</span> SC_CONFIG_ERR:
+                api-&gt;<span class="fn">log</span>(SC_LOG_WARN, <span class="st">"myplugin"</span>,
+                    <span class="st">"config_ensure failed, using defaults"</span>);
+                <span class="kw">break</span>;
+        }
+    }
+
+    <span class="cm">// 2. Читаем настройки — они уже точно есть</span>
+    <span class="kw">const char</span>* model = api-&gt;<span class="fn">config_get_string</span>(<span class="st">"model"</span>, <span class="st">"qwen3:4b"</span>);
+    <span class="ty">int</span> timeout = api-&gt;<span class="fn">config_get_int</span>(<span class="st">"timeout"</span>, <span class="nm">30</span>);
+
+    <span class="fn">snprintf</span>(g_model, <span class="kw">sizeof</span>(g_model), <span class="st">"%s"</span>, model);
+    g_timeout = timeout;
+
+    <span class="cm">// 3. Проверяем зависимости (если объявлены в requires)</span>
+    <span class="kw">if</span> (api-&gt;abi_minor &gt;= <span class="nm">4</span> &amp;&amp; api-&gt;is_plugin_loaded) {
+        <span class="kw">if</span> (!api-&gt;<span class="fn">is_plugin_loaded</span>(<span class="st">"telegram"</span>)) {
+            api-&gt;<span class="fn">log</span>(SC_LOG_WARN, <span class="st">"myplugin"</span>,
+                <span class="st">"telegram not loaded, running in limited mode"</span>);
+            g_has_telegram = <span class="nm">0</span>;
+        } <span class="kw">else</span> {
+            g_has_telegram = <span class="nm">1</span>;
+        }
+    }
+
+    <span class="kw">return</span> SC_OK;
+}</code></pre>
     </section>
 
     <footer>
